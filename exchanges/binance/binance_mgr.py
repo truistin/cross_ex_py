@@ -30,6 +30,17 @@ class BinanceMgr():
         ).hexdigest()
         return query + "&signature=" + signature
     
+    def set_pos_mode(self):
+        params = {}
+        params["timestamp"] = int(time.time() * 1000)
+        params['dualSidePosition'] = False  # True: 双向持仓  False: 单项持仓
+        query_with_sig = self.gen_sign(params)
+
+        headers = {"X-MBX-APIKEY": self.api_key}
+        url = "https://fapi.binance.com" + "/fapi/v1/positionSide/dual" + "?" + query_with_sig
+        resp = requests.post(url, headers=headers).json()
+        return resp
+
     def fetch_spot_balance(self): ##资金账户
         params = {}
         params["timestamp"] = int(time.time() * 1000)
@@ -39,7 +50,7 @@ class BinanceMgr():
 
         url = "https://api.binance.com" + "/sapi/v1/asset/get-funding-asset" + "?" + query_with_sig
         resp = requests.post(url, headers=headers).json()
-        #print(resp)
+        print(resp)
         bal = Balance()
         for item in resp:
             if item['asset'] == 'USDT':
@@ -80,7 +91,7 @@ class BinanceMgr():
                 bal.available = float(item['maxWithdrawAmount'])
                 bal.locked = 0.0
                 bal.equity = float(item['crossWalletBalance']) + float(item['crossUnPnl'])
-                print(bal)
+                #print(bal)
                 return bal
         return bal
 
@@ -98,7 +109,7 @@ class BinanceMgr():
         headers = {"X-MBX-APIKEY": self.api_key}
         url = "https://api.binance.com" + "/sapi/v1/asset/transfer" + "?" + query_with_sig
         resp = requests.post(url, headers=headers).json()
-        print(resp) 
+        #print(resp) 
         if 'code' in resp.keys(): #错误
             return 1, resp
         else:
@@ -128,8 +139,8 @@ class BinanceMgr():
             msg = resp
             id = '0'
         else:
-            id = resp['id']
-        print('resp:', resp)
+            id = None
+        #print('resp:', resp)
         return WithdrawalStatus(
                 currency=coin, tx_id=id, withdraw_clt_id=params['withdrawOrderId'], 
                 amount=params['amount'], to_exch= to_exch, address=address, chain=chain, status=status, msg=msg)
@@ -147,7 +158,7 @@ class BinanceMgr():
 
         url = "https://api.binance.com" + "/sapi/v1/capital/withdraw/history" + "?" + query_with_sig
         resp = requests.get(url, headers=headers).json()
-        print(resp)
+        #print(resp)
         for item in resp:
             if item['withdrawOrderId'] == withdraw_clt_id:
                 if item['status'] == 0:
@@ -159,8 +170,11 @@ class BinanceMgr():
                 elif item['status'] == 3:
                     return Status.FAIL, f"被拒绝({item['status']})"
                 elif item['status'] == 6:
-                    return Status.SUCC, f"提现完成({item['status']})"
-        return Status.FAIL, f'not found binance withdrawals_record {withdraw_clt_id}'
+                    return Status.SUCC, item
+        if withdraw_clt_id != None:
+            return Status.FAIL, f'not found binance withdrawals_record {withdraw_clt_id}'
+        else:
+            return Status.SUCC, 'no record'
 
     ##入金记录
     def query_desposite_record(self, tx_id):
@@ -195,9 +209,12 @@ class BinanceMgr():
 
         url = "https://fapi.binance.com" + "/fapi/v2/positionRisk" + "?" + query_with_sig
         resp = requests.get(url, headers=headers).json()
+        #print('aaa:', resp)
         for item in resp:
-            pos = Position(symbol = item['symbol'], size = float(item['positionAmt']), entry_price = float(item['entryPrice']), liq_price = float(item['liquidationPrice']), leverage = float(item['leverage']), now_price = float(item['markPrice']))
-            positions[item['symbol']] = pos
+            if float(item['positionAmt']) != 0:
+                #print(item)
+                pos = Position(symbol = item['symbol'], size = float(item['positionAmt']), entry_price = float(item['entryPrice']), liq_price = float(item['liquidationPrice']), leverage = float(item['leverage']), now_price = float(item['markPrice']))
+                positions[item['symbol']] = pos
         return positions
 
     ##获取网上链路信息
@@ -218,4 +235,12 @@ class BinanceMgr():
                     print(v['network'], v['name'])
                 #print(item)
                 return
-        
+
+
+if __name__ == "__main__":
+    binance_mgr = BinanceMgr(api_key= "ObFNMbiFySvQapIuLmtx0ttUPeBfGXoUEVMTRky8ut6raHr9N9uDJXeslYrqjM7T",
+                                secrect_key= "E5OA97KXT0ggGMmYbNEJl826pGl4qkP22coMZ5qNohTFxzrnBHmN0jaOwBXm1Ss6",
+                                passphrase="")
+    print(binance_mgr.fetch_spot_balance())
+    print("binance pos: \n".join(str(p) for p in binance_mgr.get_future_pos().values()))
+    #print(binance_mgr.asset_transfer_inner('USDT','futures', 'spot', 10))

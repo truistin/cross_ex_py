@@ -52,6 +52,20 @@ class GateMgr():
         sign = hmac.new(self.secrect_key.encode('utf-8'), s.encode('utf-8'), hashlib.sha512).hexdigest()
         return {'KEY': self.api_key, 'Timestamp': str(t), 'SIGN': sign}
     
+    def set_pos_mode(self):
+        host = "https://api.gateio.ws"
+        prefix = "/api/v4"
+        headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
+
+        url = '/futures/usdt/dual_mode'
+        query_param = 'dual_mode=false'  # false: 单项持仓, true: 双向持仓
+        # `gen_sign` 的实现参考认证一章
+        sign_headers = self.gen_sign('POST', prefix + url, query_param)
+        headers.update(sign_headers)
+        r = requests.request('POST', host + prefix + url + "?" + query_param, headers=headers)
+        print(r.json())
+
+
     def set_leverage(self, symbol, leverage):
         host = "https://api.gateio.ws"
         prefix = "/api/v4"
@@ -166,27 +180,31 @@ class GateMgr():
         else:
             status = Status.PENDING
         return WithdrawalStatus(
-                currency=r['currency'], tx_id=r['txid'], withdraw_clt_id=r['withdraw_order_id'], 
+                currency=r['currency'], tx_id=None, withdraw_clt_id=r['withdraw_order_id'], 
                 amount=r['amount'], to_exch= to_exch, address=r['address'], chain=r['chain'], status=status, msg=r['status'])
 
+
     ##提现记录
-    def query_withdrawals_record(self, coin, withdraw_clt_id):
+    def query_withdrawals_record(self, withdraw_clt_id):
         host = "https://api.gateio.ws"
         prefix = "/api/v4"
         headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
 
         url = '/wallet/withdrawals'
         query_param = {}
-        query_param['currency'] = coin
+        query_param['currency'] = 'USDT'
         query_param['withdraw_order_id'] = withdraw_clt_id
         query_string = urllib.parse.urlencode(query_param)
         # `gen_sign` 的实现参考认证一章
         sign_headers = self.gen_sign('GET', prefix + url, query_string)
         headers.update(sign_headers)
         r = requests.request('GET', host + prefix + url + "?" + query_string, headers=headers).json()
+        print(r)
+        if len(r) == 0:
+            return Status.SUCC, 'no record'
         #print(r)
         if (r['status'] == 'DONE' and int(r['block_number']) > 0): ##跨所转出成功
-            return Status.SUCC, r['status']
+            return Status.SUCC, r
         elif r['status'] == 'CANCEL' or r['status'] == 'FAIL' or r['status'] == 'REJECT':
             return Status.FAIL, r['status']
         return Status.PENDING, r['status']
@@ -240,10 +258,12 @@ class GateMgr():
         sign_headers = self.gen_sign('GET', prefix + url, query_param)
         headers.update(sign_headers)
         r = requests.request('GET', host + prefix + url, headers=headers).json()
-        print(r)
+        #print(r)
         for item in r:
-            pos = Position(symbol = item['contract'], size = float(item['size']) * self.pairs_info[item['contract']], entry_price = float(item['entry_price']), liq_price = float(item['liq_price']), leverage = float(item['leverage']), now_price = float[item['mark_price']])
-            positions[item['contract']] = pos
+            if float(item['size']) != 0:
+                print(item)
+                pos = Position(symbol = item['contract'], size = float(item['size']) * float(self.pairs_info[item['contract']]), entry_price = float(item['entry_price']), liq_price = float(item['liq_price']), leverage = float(item['cross_leverage_limit']), now_price = float(item['mark_price']))
+                positions[item['contract']] = pos
         return positions
     
     def get_chain_info(self):

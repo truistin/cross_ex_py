@@ -48,6 +48,18 @@ class KucoinMgr():
         }
         return headers
 
+    def set_pos_mode(self):
+        params = {}
+        params['positionMode'] = '0'   ## 0: 单项持仓 1: 双向持仓
+        body = json.dumps(params)
+        request_path = '/api/v2/position/switchPositionMode'
+        url = 'https://api-futures.kucoin.com' + request_path
+        method = 'POST'
+        headers = self.gen_sign(method = method, request_path = request_path, body_string = body)
+        resp = requests.request(method, url, headers=headers, data=body, timeout=10).json()
+        print(resp)
+        return resp
+
     def set_leverage(self, symbol, leverage):
         params = {}
         params['symbol'] = symbol
@@ -94,7 +106,7 @@ class KucoinMgr():
         bal.available = float(resp['data']['availableBalance'])
         bal.equity = float(resp['data']['accountEquity'])
         bal.locked = bal.equity - bal.available
-        print(bal)
+        #print(bal)
         return bal
 
     def asset_transfer_inner(self, coin, from_field, to_field, amount):
@@ -115,7 +127,7 @@ class KucoinMgr():
         method = 'POST'
         headers = self.gen_sign(method = method, request_path = request_path, body_string = body)
         resp = requests.request(method, url, headers=headers, data=body, timeout=10).json()
-        print(resp)
+        #print(resp)
         if resp['code'] == '200000': ##成功
             return 0, resp
         else:
@@ -141,22 +153,23 @@ class KucoinMgr():
         print(resp)
         if resp['code'] != '200000':
             status = Status.FAIL
-            return WithdrawalStatus(currency=coin, tx_id='0', withdraw_clt_id='0', 
+            return WithdrawalStatus(currency=coin, tx_id=None, withdraw_clt_id=None, 
                 amount=amount, to_exch= to_exch, address=address, chain=chain, status=status, msg=resp)
         else:
             status = Status.PENDING
             return WithdrawalStatus(
-                currency=coin, tx_id=resp['data']['withdrawalId'], withdraw_clt_id=resp['data']['withdrawalId'], 
+                currency=coin, tx_id=None, withdraw_clt_id=resp['data']['withdrawalId'], 
                 amount=amount, to_exch= to_exch, address=address, chain=chain, status=status, msg=resp)
 
     def query_withdrawals_record(self, withdraw_clt_id):
         params = {}
+        params['withdrawalId'] = withdraw_clt_id
         request_path = f'/api/v1/withdrawals/{withdraw_clt_id}' + '?' + urllib.parse.urlencode(params)
         method = 'GET'
         headers = self.gen_sign(method = method, request_path = request_path, body_string='')
         url = 'https://api.kucoin.com' + request_path
         resp = requests.request(method, url, headers=headers, timeout=10).json()
-        print(resp)
+        #print(resp)
         if resp['code'] != '200000':
             return Status.FAIL, resp
         else:
@@ -200,10 +213,34 @@ class KucoinMgr():
         headers = self.gen_sign(method = method, request_path = request_path, body_string='')
         url = 'https://api-futures.kucoin.com' + request_path
         resp = requests.request(method, url, headers=headers, timeout=10).json()
-        print(resp)
-        for item in resp['data']:
-            pos = Position(symbol = item['symbol'], size = float(item['currentQty']) * self.pairs_info[item['symbol']], entry_price = float(item['avgEntryPrice']), liq_price = float(item['liquidationPrice']), leverage = float(item['leverage']), now_price = float(item['markPrice']))
-            positions[item['symbol']] = pos
         #print(resp)
-        print(positions)
+        for item in resp['data']:
+            if float(item['currentQty']) != 0:
+                pos = Position(symbol = item['symbol'], size = float(item['currentQty']) * self.pairs_info[item['symbol']], entry_price = float(item['avgEntryPrice']), liq_price = float(item['liquidationPrice']), leverage = float(item['leverage']), now_price = float(item['markPrice']))
+                positions[item['symbol']] = pos
+        #print(resp)
+        #print(positions)
         return positions
+
+    def place_order(self, symbol, qty, price,):
+        qty = qty / self.pairs_info[symbol]
+        params = {}
+        params['symbol'] = symbol
+        params['clientOid'] = '12345'
+        params['side'] = 'sell' if qty < 0 else 'buy'
+        params['leverage'] = 10
+        params['marginMode'] = 'CROSS'
+        params['size'] = abs(qty)
+        params['timeInForce'] = 'GTC'
+        params['type'] = 'limit'
+        params['positionSide'] = 'BOTH'
+        params['price'] = price
+        body = json.dumps(params)
+        print(body)
+        request_path = '/api/v1/orders'
+        url = 'https://api-futures.kucoin.com' + request_path
+        method = 'POST'
+        headers = self.gen_sign(method = method, request_path = request_path, body_string = body)
+        resp = requests.request(method, url, headers=headers, data=body, timeout=10).json()
+        print(resp)
+        return resp

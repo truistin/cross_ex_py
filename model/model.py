@@ -112,9 +112,6 @@ class Position:
         self.leverage = float(leverage)
         self.now_price = float(now_price)
 
-    def stringify(self):
-        return simplejson.dumps(self.__dict__)
-    
     def __str__(self):
-        return self.stringify()
+        return f"Position({self.symbol}, size={self.size}, entry={self.entry_price}), leverage={self.leverage}, now_price={self.now_price}"
     

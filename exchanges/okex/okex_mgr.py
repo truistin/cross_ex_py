@@ -84,7 +84,7 @@ class OkexMgr():
         url = 'https://www.okx.com' + request_path
         headers = self.gen_sign(method, request_path, "")
         resp = requests.request(method, url, headers=headers, timeout=10).json()
-        print(resp)
+        #print(resp)
         bal = Balance()
         for item in resp['data'][0]['details']:
             if item['ccy'] == 'USDT':
@@ -92,7 +92,7 @@ class OkexMgr():
                 bal.available = float(item['availEq'])
                 bal.locked = float(item['ordFrozen'])
                 bal.equity = float(item['eq'])
-                print(bal)
+                #print(bal)
                 return bal
         return bal
 

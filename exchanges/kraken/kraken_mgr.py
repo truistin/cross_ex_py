@@ -36,14 +36,7 @@ class KrakenMgr():
         return px_map
 
     def fetch_pairs_info(self):
-        response = self.spot_request(
-            method = "GET",
-            path = "/derivatives/api/v3/instruments",
-            environment = "https://futures.kraken.com",
-        ).read().decode()
-        resp = json.loads(response)
-        for item in resp['instruments']:
-            self.pairs_info[item['symbol']] = float(item['contractSize'])
+        pass  ##kraken不需要contractsize
 
     def spot_request(self,api_key = '', secrect_key = '', method: str = "GET", path: str = "", query: dict | None = None, body: dict | None = None, environment: str = "") -> http.client.HTTPResponse:
         url = environment + path
@@ -98,6 +91,9 @@ class KrakenMgr():
         )
         return urllib.request.urlopen(req)
 
+    def set_pos_mode(self):
+        return 'succ'
+
     def set_leverage(self, symbol, leverage):
         return 'succ'
 
@@ -148,15 +144,16 @@ class KrakenMgr():
             environment = "https://futures.kraken.com",
         ).read().decode()
         resp = json.loads(response)
+        #print(resp)
         bal = Balance()
         
         bal.currency = 'USDT'
-        bal.available = float(resp['accounts']['flex']['currencies']['USDT']['available']) if 'USDT' in resp['accounts']['flex']['currencies'].keys() else 0.0
+        bal.available = float(resp['accounts']['flex']['availableMargin'])
         bal.locked = 0.0
         bal.equity = float(resp['accounts']['flex']['marginEquity'])
         
         #print(resp['accounts']['flex'])
-        print(bal)
+        #print(bal)
         return bal
     
     # field spot, future
@@ -176,11 +173,11 @@ class KrakenMgr():
                 environment="https://api.kraken.com",
             ).read().decode()
             resp = json.loads(response)
-            print(resp)
+            #print(resp)
             if resp['error'] : ##有错误
-                return 1
+                return 1, resp
             else: ##没有错误
-                return 0
+                return 0, resp
         else :
             response = self.future_request(
                 api_key = self.future_api_key,
@@ -215,7 +212,7 @@ class KrakenMgr():
             environment="https://api.kraken.com",
         ).read().decode()
         resp = json.loads(response)
-        print(resp)
+        #print(resp)
         if resp.get("error"):
             return WithdrawalStatus(
                 currency=coin, tx_id='0', withdraw_clt_id='0', 
@@ -239,7 +236,7 @@ class KrakenMgr():
             environment="https://api.kraken.com",
         ).read().decode()
         resp = json.loads(response)
-        print(resp)
+        #print(resp)
         for item in resp['result']:
             if withdraw_order_id == item['refid']:
                 if item['status'] == 'Success':
@@ -248,7 +245,10 @@ class KrakenMgr():
                     return Status.PENDING, item
                 elif item['status'] == 'Failure':
                     return Status.FAIL, item
-        return Status.FAIL, f'not found kraken withdrawals_record {withdraw_clt_id}'
+        if withdraw_order_id != None:
+            return Status.FAIL, f'not found kraken withdrawals_record {withdraw_clt_id}'
+        else:
+            return Status.SUCC, 'no record'
 
     ##入金记录
     def query_desposite_record(self, tx_id):
@@ -263,7 +263,7 @@ class KrakenMgr():
             environment="https://api.kraken.com",
         ).read().decode()
         resp = json.loads(response)
-        print(resp)
+        #print(resp)
         for item in resp['result']:
             if item['txid'] == tx_id:
                 if item['status'] == 'Success':
@@ -282,15 +282,6 @@ class KrakenMgr():
         for item in resp['tickers']:
             tickers[item['symbol']] = float(item['last']) if 'last' in item.keys() else 0.0
         response = self.future_request(
-            api_key = self.future_api_key,
-            secrect_key = self.future_secrect_key,
-            method = "GET",
-            path = "/derivatives/api/v3/accounts",
-            environment = "https://futures.kraken.com",
-        ).read().decode()
-        r = json.loads(response)
-
-        response = self.future_request(
             method = "GET",
             path = "/derivatives/api/v3/openpositions",
             api_key=self.future_api_key,
@@ -298,18 +289,58 @@ class KrakenMgr():
             environment = "https://futures.kraken.com",
         ).read().decode()
         resp = json.loads(response)
-        initalMargin = r['accounts']['flex']['initialMargin']
-        #print('initalMargin', initalMargin)
         for item in resp['openPositions']:
-            size = float(item['size']) * self.pairs_info[item['symbol']]
-            if item['side'] == 'short':
-                size = -float(item['size']) * self.pairs_info[item['symbol']]
-            notional = abs(size) * tickers[item['symbol']]
-            leverage = (notional / initalMargin) if initalMargin != 0 else 10
-            leverage = 10 if leverage < 10 else leverage
-            pos = Position(symbol = item['symbol'], size = size, entry_price = float(item['price']), liq_price = 0, leverage = leverage, now_price = tickers[item['symbol']])
-            positions[item['symbol']] = pos
+            size = float(item['size'])
+            if size != 0:
+                if item['side'] == 'short':
+                    size = -float(item['size'])
+                leverage = 10
+                pos = Position(symbol = item['symbol'], size = size, entry_price = float(item['price']), liq_price = 0, leverage = leverage, now_price = tickers[item['symbol']])
+                positions[item['symbol']] = pos
         return positions
+
+    def fetch_open_order(self):
+        response = self.future_request(
+            method = "GET",
+            path = "/derivatives/api/v3/openorders",
+            api_key=self.future_api_key,
+            secrect_key=self.future_secrect_key,
+            environment = "https://futures.kraken.com",
+        ).read().decode()
+        resp = json.loads(response)
+        print(resp)
+    
+    def place_order(self):
+        response = self.future_request(
+            method="POST",
+            path="/derivatives/api/v3/sendorder",
+            body={
+                "orderType": 'lmt',
+                "symbol": 'PF_XBTUSD',
+                "side": "sell",
+                "size": "0.0001",
+                "limitPrice": "80000",
+            },
+            api_key=self.future_api_key,
+            secrect_key=self.future_secrect_key,
+            environment="https://futures.kraken.com",
+        ).read().decode()
+        resp = json.loads(response)
+        print(resp)
+
+    def cancel_all_order(self, symbol):
+        response = self.future_request(
+            method="POST",
+            path="/derivatives/api/v3/cancelallorders",
+            body={
+                'symbol': symbol
+            },
+            api_key=self.future_api_key,
+            secrect_key=self.future_secrect_key,
+            environment="https://futures.kraken.com",
+        ).read().decode()
+        resp = json.loads(response)
+        print(resp)
 
         
         
