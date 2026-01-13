@@ -141,13 +141,16 @@ class Strategy:
             if exchange not in self.can_transfer.keys() \
                and exchange not in self.need_transfer.keys() \
                and self.exch_future_bal[exchange].equity > self.available_factor * self.exch_im[exchange]: ## 有富余 可以转账
-                    self.can_transfer[exchange] = min(round(self.exch_future_bal[exchange].available), round(self.exch_future_bal[exchange].equity - self.available_factor * self.exch_im[exchange]))
+                    amt = min(round(self.exch_future_bal[exchange].available), round(self.exch_future_bal[exchange].equity - self.available_factor * self.exch_im[exchange]))
+                    if amt > self.min_transfer_amt:
+                        self.can_transfer[exchange] = amt
 
     def transfer_chain(self, coin, from_exch, to_exch, amount, withdraw_clt_id):
         self.logger.info(f"transfer_chain request: {coin}, from_exch: {from_exch}, to_exch:{to_exch}, amount:{amount}, withdraw_clt_id:{withdraw_clt_id}")
         add_len = len(self.exch_addr[from_exch])
         if withdraw_clt_id == None: ##每个链都转一下
-            self.exch_withdraw_record[from_exch] = {}
+            if from_exch not in self.exch_withdraw_record.keys():
+                self.exch_withdraw_record[from_exch] = {}
             for chain, addr in self.exch_addr[to_exch].items():
                 if from_exch == Exchange.KRAKEN:
                     transfer_addr = addr[0]
@@ -175,21 +178,15 @@ class Strategy:
                         self.exch_im[exch] = sum( abs(p.size) * p.now_price / p.leverage for p in self.exch_pos[exch].values())
                     self.logger.info(f'{exch} exch_im: {self.exch_im[exch]}')
                     self.verify_transfer(exch)
-                    if exch not in self.need_transfer.keys() and exch not in self.can_transfer.keys():
-                        spot_bal = mgr.fetch_spot_balance()
-                        self.logger.info(f'{exch} spot_bal: {spot_bal}')
-                        if self.exch_spot_bal[exch].available > 1.0 :
-                            code, msg = mgr.asset_transfer_inner('USDT', 'spot', 'futures', self.exch_spot_bal[exch].available)
-                            if code != 0:
-                                self.logger.warning(f'{exch} transfer from spot to future fail, msg: {msg}')
-                            else:
-                                self.logger.info(f'{exch} transfer from spot to future succ, msg: {msg}')
                 self.run_status = 1
                 sorted_need = dict(sorted(self.need_transfer.items(), key = lambda x: x[1]['amt'], reverse=True))
                 self.logger.info(f"need_transfer:{self.need_transfer}, can_transfer:{self.can_transfer}")
                 for need_exch, need_val in sorted_need.items():
                     if need_val['status'] == NeedTransfer.NEW: ##准备划转, 先将资金转入现货
                         sorted_can = dict(sorted(self.can_transfer.items(), key = lambda x: x[1], reverse=True))
+                        if not sorted_can:
+                            self.logger.warning("can_transfer is Null")
+                            break
                         can_exch, can_val = next(iter(sorted_can.items()))
                         transfer_amt = min(can_val, need_val['amt'])
                         if transfer_amt < self.min_transfer_amt:
@@ -216,30 +213,39 @@ class Strategy:
                         del self.need_transfer[exch]
                     if exch in self.can_transfer.keys() and exch not in self.exch_withdraw_record.keys():
                         del self.can_transfer[exch]
+                    if exch not in self.need_transfer.keys() and exch not in self.can_transfer.keys():
+                        spot_bal = mgr.fetch_spot_balance()
+                        self.logger.info(f'{exch} spot_bal: {spot_bal}')
+                        if self.exch_spot_bal[exch].available > 1.0 :
+                            code, msg = mgr.asset_transfer_inner('USDT', 'spot', 'futures', round(self.exch_spot_bal[exch].available))
+                            if code != 0:
+                                self.logger.warning(f'{exch} transfer from spot to future fail, msg: {msg}')
+                            else:
+                                self.logger.info(f'{exch} transfer from spot to future succ, msg: {msg}')
                     if exch in self.exch_withdraw_record.keys():  ##检查交易所是否在跨所转账
                         for clt_id,_ in list(self.exch_withdraw_record[exch].items()):
                             if self.exch_withdraw_record[exch][clt_id].status in (Status.CANCEL, Status.FAIL): ##转账失败，重新转
-                                self.logger.warning(f'{exch} transfer to {self.exch_withdraw_record[exch][clt_id].to_exch} fail, chain:{self.exch_withdraw_record[exch][clt_id].chain} status:{self.exch_withdraw_record[exch][clt_id].status}')
+                                self.logger.warning(f'{exch} transfer to {self.exch_withdraw_record[exch][clt_id].to_exch} {self.exch_withdraw_record[exch][clt_id].status}, chain:{self.exch_withdraw_record[exch][clt_id].chain}')
                                 self.transfer_chain(coin='USDT', from_exch=exch, to_exch=self.exch_withdraw_record[exch][clt_id].to_exch, amount=self.exch_withdraw_record[exch][clt_id].amount, withdraw_clt_id = self.exch_withdraw_record[exch][clt_id].withdraw_clt_id)
                             elif self.exch_withdraw_record[exch][clt_id].status == Status.SUCC: ##转账成功
                                 desposite_status, msg = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].query_desposite_record(self.exch_withdraw_record[exch][clt_id].tx_id) #充值状态
+                                self.logger.info(f'query_desposite_record {exch} transfer to {self.exch_withdraw_record[exch][clt_id].to_exch} {desposite_status}, chain:{self.exch_withdraw_record[exch][clt_id].chain}, msg:{msg}')
                                 if desposite_status == Status.FAIL: #充值失败
-                                    self.logger.error(f'{exch} transfer to {self.exch_withdraw_record[exch][clt_id].to_exch} SUCC, but query deposite_record fail, msg:{msg}')
                                     self.exch_withdraw_record[exch][clt_id].status = Status.FAIL
                                 elif desposite_status == Status.PENDING: #充值中
                                     self.exch_withdraw_record[exch][clt_id].status = Status.PENDING
                                 elif desposite_status == Status.SUCC: #充值成功
                                     spot_bal = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].fetch_spot_balance()
-                                    code, msg = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].asset_transfer_inner(self.exch_withdraw_record[exch][clt_id].currency, 'spot', 'future', spot_bal.available)
-                                    if code != 0:  #内部转账失败
-                                        self.logger.warning(f'{self.exch_withdraw_record[exch][clt_id].to_exch} transfer from spot to future fail, msg: {msg}')
-                                    else: #内部转账成功
-                                        self.logger.info(f'{self.exch_withdraw_record[exch][clt_id].to_exch} transfer from spot to future succ, msg: {msg}')
-                                        del_withdraw_record[exch] = clt_id
+                                    if spot_bal.available > 1.0 :
+                                        code, msg = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].asset_transfer_inner(self.exch_withdraw_record[exch][clt_id].currency, 'spot', 'futures', spot_bal.available)
+                                        if code != 0:  #内部转账失败
+                                            self.logger.warning(f'{self.exch_withdraw_record[exch][clt_id].to_exch} transfer from spot to future fail, msg: {msg}')
+                                        else: #内部转账成功
+                                            self.logger.info(f'{self.exch_withdraw_record[exch][clt_id].to_exch} transfer from spot to future succ, msg: {msg}')
+                                            del_withdraw_record[exch] = clt_id
                             elif self.exch_withdraw_record[exch][clt_id].status == Status.PENDING: ##转账中
                                 status, msg = mgr.query_withdrawals_record(self.exch_withdraw_record[exch][clt_id].withdraw_clt_id)
                                 if status == Status.FAIL: ##转账失败，继续转账
-                                    self.logger.warning(f'{exch} transfer to {self.exch_withdraw_record[exch][clt_id].to_exch} fail, chain:{self.exch_withdraw_record[exch][clt_id].chain} msg:{msg}')
                                     self.exch_withdraw_record[exch][clt_id].status = Status.FAIL
                                 elif status == Status.SUCC: #转账成功
                                     self.exch_withdraw_record[exch][clt_id].status = Status.SUCC
@@ -253,7 +259,7 @@ class Strategy:
                                         self.exch_withdraw_record[exch][clt_id].tx_id = msg['txid']
                                     elif exch == Exchange.GATE:
                                         self.exch_withdraw_record[exch][clt_id].tx_id = msg['txid']
-                                    self.logger.info(f'{exch} transfer to {self.exch_withdraw_record[exch][clt_id].to_exch} SUCC, chain:{self.exch_withdraw_record[exch][clt_id].chain} msg:{msg}')
+                                self.logger.info(f'query_withdrawals_record, {exch} transfer to {self.exch_withdraw_record[exch][clt_id].to_exch} {status}, chain:{self.exch_withdraw_record[exch][clt_id].chain}, msg:{msg}')
                 for exch, clt_id in del_withdraw_record.items():
                     del self.exch_withdraw_record[exch][clt_id]
                     if len(self.exch_withdraw_record[exch]) == 0:

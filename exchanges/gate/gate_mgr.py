@@ -203,11 +203,11 @@ class GateMgr():
         if len(r) == 0:
             return Status.SUCC, 'no record'
         #print(r)
-        if (r['status'] == 'DONE' and int(r['block_number']) > 0): ##跨所转出成功
-            return Status.SUCC, r
-        elif r['status'] == 'CANCEL' or r['status'] == 'FAIL' or r['status'] == 'REJECT':
-            return Status.FAIL, r['status']
-        return Status.PENDING, r['status']
+        if (r[0]['status'] == 'DONE' and int(r[0]['block_number']) > 0): ##跨所转出成功
+            return Status.SUCC, r[0]
+        elif r[0]['status'] == 'CANCEL' or r[0]['status'] == 'FAIL' or r[0]['status'] == 'REJECT':
+            return Status.FAIL, r[0]['status']
+        return Status.PENDING, r[0]['status']
 
     ##入金记录
     def query_desposite_record(self, tx_id):
