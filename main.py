@@ -73,7 +73,7 @@ class Strategy:
             for item in deploy_doc['secrets']:
                 secret_doc = secrets_db.find_one({"_id":{"$regex":f'{item}'}})
                 if secret_doc['exchange'] == 'kraken':
-                    spot_secret_doc = secrets_db.find_one({"_id":{"$regex":f'{secret_doc['_id'].split(":")[0] + ":spot"}'}})
+                    spot_secret_doc = secrets_db.find_one({"_id":{"$regex":f'{secret_doc["_id"].split(":")[0] + ":spot"}'}})
                     self.exch_mgr[Exchange(secret_doc['exchange'])] = EXCHANGE_MGR[Exchange(secret_doc['exchange'])](
                             future_api_key = secret_doc['api_key'], 
                             future_secrect_key = secret_doc['secret_key'], 
@@ -271,12 +271,10 @@ class Strategy:
 ##/opt/homebrew/Caskroom/miniconda/base/bin/python3
 #python3 main.py teff_teff001 mongodb://admin:ceff12343@3.114.59.95:27179
 if __name__ == "__main__":
-    
-    #username = sys.argv[1]
-    #mongodb_uri = sys.argv[2]
-    
-    username = 'teff_teff001'
-    mongodb_uri = 'mongodb://admin:ceff12343@3.114.59.95:27179'
+    username = sys.argv[1]
+    mongodb_uri = sys.argv[2]
+    #username = 'teff_teff001'
+    #mongodb_uri = 'mongodb://admin:ceff12343@3.114.59.95:27179'
     logs_init_std(f'{username}_exch_funding')
     strategy = Strategy(username, mongodb_uri)
     strategy.run()
