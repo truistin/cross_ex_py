@@ -38,7 +38,7 @@ class KrakenMgr():
     def fetch_pairs_info(self):
         pass  ##kraken不需要contractsize
 
-    def spot_request(self,api_key = '', secrect_key = '', method: str = "GET", path: str = "", query: dict | None = None, body: dict | None = None, environment: str = "") -> http.client.HTTPResponse:
+    def spot_request(self,api_key = '', secrect_key = '', method: str = "GET", path: str = "", query = None, body = None, environment: str = "") -> http.client.HTTPResponse:
         url = environment + path
         query_str = ""
         if query is not None and len(query) > 0:
