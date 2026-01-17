@@ -68,7 +68,7 @@ class KrakenMgr():
         )
         return urllib.request.urlopen(req)
 
-    def future_request(self, api_key, secrect_key, method: str = "GET", path: str = "", query: dict | None = None, body: dict | None = None, nonce: str = "", environment: str = "") -> http.client.HTTPResponse:
+    def future_request(self, api_key, secrect_key, method: str = "GET", path: str = "", query = None, body = None, nonce: str = "", environment: str = "") -> http.client.HTTPResponse:
         url = environment + path
         query_str = ""
         if query is not None and len(query) > 0:
