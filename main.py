@@ -200,22 +200,21 @@ class Strategy:
                             self.logger.info(f'{can_exch} transfer from future to spot succ, msg: {msg}')
                             for i in range(5):
                                 time.sleep(1)
-                                spot_bal = self.exch_mgr[can_exch].fetch_spot_balance()
-                                if spot_bal.available < transfer_amt:
-                                    self.logger.warning(f'{can_exch} transfer from future to spot error, need {transfer_amt} but {spot_bal.available}')
-                                if spot_bal.available > 0:
+                                self.exch_spot_bal[can_exch] = self.exch_mgr[can_exch].fetch_spot_balance()
+                                if self.exch_spot_bal[can_exch].available >= transfer_amt * 0.99:
                                     break
-                            if spot_bal.available == 0:
+                            if self.exch_spot_bal[can_exch].available < transfer_amt * 0.99:
+                                self.logger.warning(f'{can_exch} transfer from future to spot error, need {transfer_amt} but {self.exch_spot_bal[can_exch].available}')
                                 continue
-                            self.transfer_chain(coin='USDT', from_exch=can_exch, to_exch=need_exch, amount=spot_bal.available, withdraw_clt_id = None)
+                            self.transfer_chain(coin='USDT', from_exch=can_exch, to_exch=need_exch, amount=self.exch_spot_bal[can_exch].available, withdraw_clt_id = None)
                 for exch, mgr in self.exch_mgr.items():
                     if  exch in self.need_transfer.keys() and exch not in {record.to_exch for records_map in self.exch_withdraw_record.values() for record in records_map.values()} :
                         del self.need_transfer[exch]
                     if exch in self.can_transfer.keys() and exch not in self.exch_withdraw_record.keys():
                         del self.can_transfer[exch]
                     if exch not in self.need_transfer.keys() and exch not in self.can_transfer.keys():
-                        spot_bal = mgr.fetch_spot_balance()
-                        self.logger.info(f'{exch} spot_bal: {spot_bal}')
+                        self.exch_spot_bal[exch] = mgr.fetch_spot_balance()
+                        self.logger.info(f'{exch} spot_bal: {self.exch_spot_bal[exch]}')
                         if self.exch_spot_bal[exch].available > 1.0 :
                             code, msg = mgr.asset_transfer_inner('USDT', 'spot', 'futures', round(self.exch_spot_bal[exch].available))
                             if code != 0:
@@ -235,9 +234,9 @@ class Strategy:
                                 elif desposite_status == Status.PENDING: #充值中
                                     self.exch_withdraw_record[exch][clt_id].status = Status.PENDING
                                 elif desposite_status == Status.SUCC: #充值成功
-                                    spot_bal = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].fetch_spot_balance()
-                                    if spot_bal.available > 1.0 :
-                                        code, msg = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].asset_transfer_inner(self.exch_withdraw_record[exch][clt_id].currency, 'spot', 'futures', spot_bal.available)
+                                    self.exch_spot_bal[self.exch_withdraw_record[exch][clt_id].to_exch] = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].fetch_spot_balance()
+                                    if self.exch_spot_bal[self.exch_withdraw_record[exch][clt_id].to_exch].available > 1.0 :
+                                        code, msg = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].asset_transfer_inner(self.exch_withdraw_record[exch][clt_id].currency, 'spot', 'futures', self.exch_spot_bal[self.exch_withdraw_record[exch][clt_id].to_exch].available)
                                         if code != 0:  #内部转账失败
                                             self.logger.warning(f'{self.exch_withdraw_record[exch][clt_id].to_exch} transfer from spot to future fail, msg: {msg}')
                                         else: #内部转账成功
@@ -264,7 +263,7 @@ class Strategy:
                     del self.exch_withdraw_record[exch][clt_id]
                     if len(self.exch_withdraw_record[exch]) == 0:
                         del self.exch_withdraw_record[exch]
-                time.sleep(60)
+                time.sleep(15)
             except Exception as e:
                 self.logger.exception("error: %s", e)
 
@@ -291,9 +290,9 @@ if __name__ == "__main__":
                             passphrase = "Nfx921011.")
     #print(kucoin_mgr.asset_transfer_inner('USDT','futures', 'spot', 10))
     #kucoin_mgr.fetch_pairs_info()
-    print('future:', kucoin_mgr.fetch_future_balance())
-    print('spot:', kucoin_mgr.fetch_spot_balance())
-    print(kucoin_mgr.query_withdrawals_record('696250571d220900071d3c03'))
+    #print('future:', kucoin_mgr.fetch_future_balance())
+    #print('spot:', kucoin_mgr.fetch_spot_balance())
+    #print(kucoin_mgr.query_withdrawals_record('696250571d220900071d3c03'))
     #print(kucoin_mgr.asset_transfer_inner('USDT','futures', 'spot', 10))
     #print(kucoin_mgr.withdrawals('USDT', Exchange.BINANCE, 'TQeuBCiEr86yZrW86wkgvYiHtYoibKD4Y8', 'trc20', 100))
     #print(kucoin_mgr.fetch_spot_balance())
@@ -305,10 +304,11 @@ if __name__ == "__main__":
                        secrect_key = "d1e43148cfce36dcb869d2214851338441874edc12240126fe87d42e9b535a37", 
                        passphrase= "")
     
-    print(gate_mgr.query_withdrawals_record("aaa"))
+    #print(gate_mgr.query_withdrawals_record("gate_withdrawals_1768463080309"))
     #print(gate_mgr.asset_transfer_inner('USDT','futures', 'spot', 10))
     #gate_mgr.fetch_pairs_info()
-    #print(gate_mgr.fetch_future_balance())
+    print(gate_mgr.fetch_future_balance())
+    print(gate_mgr.fetch_spot_balance())
     #print(gate_mgr.get_future_pos())
 
     binance_mgr = BinanceMgr(api_key= "ObFNMbiFySvQapIuLmtx0ttUPeBfGXoUEVMTRky8ut6raHr9N9uDJXeslYrqjM7T",
@@ -328,7 +328,7 @@ if __name__ == "__main__":
                             spot_secrect_key='XBg4BfZjPnQyIWQ/hbnCQ3M7X8jm9XofNwlp2m2e8RhsOUu1ummtIPGOvdNy5G/zrn6IeX+XDgjKX4ZuHGp7/A==',
                             spot_passphrase='')
     kraken_mgr.fetch_pairs_info()
-    #kraken_mgr.withdrawals('USDT', Exchange.BINANCE, Bn_Trc20, 'trc20', 100)
+    #kraken_mgr.withdrawals('USDT', Exchange.BINANCE, 'Bn_Trc20', 'trc20', 20)
     #print(kraken_mgr.query_desposite_record('f97f9e5890994b7f840e7c67498667ac'))
     #print(kraken_mgr.fetch_future_balance())
     #print(kraken_mgr.fetch_spot_balance())

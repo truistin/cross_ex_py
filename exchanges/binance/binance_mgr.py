@@ -47,7 +47,7 @@ class BinanceMgr():
         query_with_sig = self.gen_sign(params)
 
         headers = {"X-MBX-APIKEY": self.api_key}
-
+        
         url = "https://api.binance.com" + "/sapi/v1/asset/get-funding-asset" + "?" + query_with_sig
         resp = requests.post(url, headers=headers).json()
         print(resp)

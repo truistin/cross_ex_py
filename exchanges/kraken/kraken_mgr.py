@@ -212,14 +212,14 @@ class KrakenMgr():
             environment="https://api.kraken.com",
         ).read().decode()
         resp = json.loads(response)
-        #print(resp)
+        print('aaaaa:', resp)
         if resp.get("error"):
             return WithdrawalStatus(
-                currency=coin, tx_id='0', withdraw_clt_id='0', 
+                currency=coin, tx_id=None, withdraw_clt_id=None, 
                 amount=amount, to_exch=to_exch, address=address, chain=chain, status=Status.FAIL, msg=resp)
         else: 
             return WithdrawalStatus(
-                currency=coin, tx_id=resp['result'], withdraw_clt_id=resp['result'], 
+                currency=coin, tx_id=None, withdraw_clt_id=resp['result']['refid'], 
                 amount=amount, to_exch=to_exch, address=address, chain=chain, status=Status.PENDING, msg=resp)
 
 

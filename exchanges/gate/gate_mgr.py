@@ -203,7 +203,11 @@ class GateMgr():
         if len(r) == 0:
             return Status.SUCC, 'no record'
         #print(r)
-        if (r[0]['status'] == 'DONE' and int(r[0]['block_number']) > 0): ##跨所转出成功
+        if r[0]['block_number'] == '':
+            block_number = 0
+        else:
+            block_number = int(r[0]['block_number'])
+        if (r[0]['status'] == 'DONE' and block_number > 0): ##跨所转出成功
             return Status.SUCC, r[0]
         elif r[0]['status'] == 'CANCEL' or r[0]['status'] == 'FAIL' or r[0]['status'] == 'REJECT':
             return Status.FAIL, r[0]['status']
