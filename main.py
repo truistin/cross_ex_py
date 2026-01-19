@@ -3,7 +3,8 @@ from exchanges.kraken.kraken_mgr import KrakenMgr
 from exchanges.binance.binance_mgr import BinanceMgr
 from exchanges.kucoin.kucoin_mgr import KucoinMgr
 from exchanges.okex.okex_mgr import OkexMgr
-from model.model import Exchange, NeedTransfer, Chain, Status, format_symbol, Position
+from influxdb import InfluxDBClient
+from model.model import Exchange, NeedTransfer, Chain, Status, format_symbol,format_symbol_standard, Position
 import time
 from pymongo import MongoClient
 import sys, logging, os
@@ -54,8 +55,13 @@ class Strategy:
     adl_factor = 0.25 * 2.5 #强平 杠杆10倍， 离爆仓还有5个点就强平 强平在交易程序里进行，不在这里
     min_transfer_amt = 0 #最小划转额度
     run_status = 0
+    influx_clt = None
+    username = ""
+    cfg_symbols = []
+
 
     def __init__(self, username, mongodb_uri):
+        self.username = username
         self.logger = logging.getLogger(f'{username}_exch_funding')
         mongo_clt = MongoClient('mongodb://admin:ceff12343@3.114.59.95:27179')
         client = username.split('_')[0]
@@ -92,11 +98,16 @@ class Strategy:
             self.logger.error("orch_doc is None")
             raise ValueError("orch_doc is None")
 
+        influx_json = mongo_clt["DataSource"]["influx"].find_one({"_id":{"$regex": f".*account_data$"}})
+        self.influx_clt = InfluxDBClient(host = influx_json["host"], port = influx_json["port"], username = influx_json["username"], password = influx_json["password"], database = influx_json["database"], ssl = influx_json["ssl"])
+        
         for item in deploy_doc['pair_configs']:
             symbol = format_symbol(Exchange(item['master_pair'].split(':')[0]), item['master_pair'].split(':')[2])
+            self.cfg_symbols.append((symbol, Exchange(item['master_pair'].split(':')[0])))
             resp = self.exch_mgr[Exchange(item['master_pair'].split(':')[0])].set_leverage(symbol, item['master_leverage'])
             self.logger.info(f"{Exchange(item['master_pair'].split(':')[0])} set leverage resp: {resp}")
             symbol = format_symbol(Exchange(item['slave_pair'].split(':')[0]), item['slave_pair'].split(':')[2])
+            self.cfg_symbols.append((symbol, Exchange(item['slave_pair'].split(':')[0])))
             resp = self.exch_mgr[Exchange(item['slave_pair'].split(':')[0])].set_leverage(symbol, item['slave_leverage'])
             self.logger.info(f"{Exchange(item['slave_pair'].split(':')[0])} set leverage resp: {resp}")
 
@@ -126,7 +137,68 @@ class Strategy:
             symbol = item['slave_pair'].split(':')[2]
             px = px_map[exch][format_symbol(exch, symbol)]
             self.exch_im[exch] += float(item['max_pos_notional']) / float(item['slave_leverage'])
-        
+
+    def record_influxdb(self):
+        if len(self.exch_withdraw_record) == 0:
+            all_future_bal = 0.0
+            points = []
+            for exch, mgr in self.exch_mgr.items():
+                principals_amounts = {}
+                future_bal = mgr.fetch_future_balance()
+                principals_amounts["usdt"] = future_bal.equity
+                all_future_bal += future_bal.equity
+                tags = {
+                    "client": self.username.split('_')[0],
+                    "username": self.username.split('_')[1],
+                    "exchange": exch.value,
+                }
+                point = {"measurement": "balance_exch", "tags":tags, "fields":principals_amounts}
+                points.append(point)
+
+            tags = {
+                "client": self.username.split('_')[0],
+                "username": self.username.split('_')[1],
+                "exchange": "all",
+            }
+            principals_amounts["usdt"] = all_future_bal
+            point = {"measurement": "balance_exch", "tags":tags, "fields":principals_amounts}
+            points.append(point)
+            self.influx_clt.write_points(points, time_precision="ms")
+
+        points = []
+        trade_symbols = []
+        for exch, mgr in self.exch_mgr.items():
+            future_pos = mgr.get_future_pos()
+            for symbol, pos in future_pos.items():
+                trade_symbols.append((symbol, exch))
+                tags = {
+                    "client": self.username.split('_')[0],
+                    "username": self.username.split('_')[1],
+                    "exchange": exch.value,
+                    "pair": format_symbol_standard(exch, pos.symbol),
+                }
+                fields = {}
+                fields['entry_price'] = pos.entry_price
+                fields['size'] = pos.size
+                point = {"measurement": "position_exch", "tags":tags, "fields":fields}
+                points.append(point)
+        res = list(set(self.cfg_symbols) - set(trade_symbols))
+        #self.logger.info(f"{self.cfg_symbols}   {trade_symbols}  {res}")
+        for symbol, exch in res:
+            tags = {
+                "client": self.username.split('_')[0],
+                "username": self.username.split('_')[1],
+                "exchange": exch.value,
+                "pair": format_symbol_standard(exch, symbol)
+            }
+            fields = {}
+            fields['entry_price'] = 0.0
+            fields['size'] = 0.0
+            point = {"measurement": "position_exch", "tags":tags, "fields":fields}
+            points.append(point)
+        self.influx_clt.write_points(points, time_precision="ms")
+
+
     def verify_transfer(self, exchange):
         if self.exch_future_bal[exchange].equity < self.transfer_factor * self.exch_im[exchange]:  ##需要转账金额
             #del self.can_transfer[exchange]
@@ -167,6 +239,7 @@ class Strategy:
 
     def run(self):
         while True:
+            time_period = 15
             try:
                 del_withdraw_record = {}
                 for exch, mgr in self.exch_mgr.items():
@@ -232,6 +305,7 @@ class Strategy:
                                 if desposite_status == Status.FAIL: #充值失败
                                     self.exch_withdraw_record[exch][clt_id].status = Status.FAIL
                                 elif desposite_status == Status.PENDING: #充值中
+                                    time_period = 5
                                     self.exch_withdraw_record[exch][clt_id].status = Status.PENDING
                                 elif desposite_status == Status.SUCC: #充值成功
                                     self.exch_spot_bal[self.exch_withdraw_record[exch][clt_id].to_exch] = self.exch_mgr[self.exch_withdraw_record[exch][clt_id].to_exch].fetch_spot_balance()
@@ -248,6 +322,7 @@ class Strategy:
                                     self.exch_withdraw_record[exch][clt_id].status = Status.FAIL
                                 elif status == Status.SUCC: #转账成功
                                     self.exch_withdraw_record[exch][clt_id].status = Status.SUCC
+                                    time_period = 5
                                     if exch == Exchange.OKEX:
                                         self.exch_withdraw_record[exch][clt_id].tx_id = msg['data'][0]['txId']
                                     elif exch == Exchange.BINANCE:
@@ -263,7 +338,8 @@ class Strategy:
                     del self.exch_withdraw_record[exch][clt_id]
                     if len(self.exch_withdraw_record[exch]) == 0:
                         del self.exch_withdraw_record[exch]
-                time.sleep(15)
+                self.record_influxdb()
+                time.sleep(time_period)
             except Exception as e:
                 self.logger.exception("error: %s", e)
 

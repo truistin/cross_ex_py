@@ -54,6 +54,27 @@ def format_symbol(exchange: Exchange, symbol: str) -> str:
     else:
         raise ValueError(f"unsupported exchange: {exchange}")
 
+def format_symbol_standard(exchange: Exchange, symbol: str) -> str:
+    symbol = symbol.lower()
+    if exchange == Exchange.BINANCE:
+        return symbol.rsplit("usdt", 1)[0] + "-usdt-swap"
+    elif exchange == Exchange.GATE:
+        return symbol.replace("_", "-") + "-swap"
+    elif exchange == Exchange.OKEX:
+        return symbol
+    elif exchange == Exchange.KUCOIN:
+        if symbol == 'xbtusdtm':
+            return 'btc-usdt-swap'
+        else:
+            return symbol.rsplit("usdtm", 1)[0] + "-usdt-swap"
+    elif exchange == Exchange.KRAKEN:
+        if symbol == 'pf_xbtusd':
+            return 'btc-usdt-swap'
+        else:
+            return symbol.split('_')[1].rsplit('usd', 1)[0] + '-usdt-swap'
+    else:
+        raise ValueError(f"unsupported exchange: {exchange}")
+
 class Chain(str, Enum):
     TRC20 = 'trc20'
     ERC20 = 'erc20'
