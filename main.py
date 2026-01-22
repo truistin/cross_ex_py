@@ -63,7 +63,7 @@ class Strategy:
     def __init__(self, username, mongodb_uri):
         self.username = username
         self.logger = logging.getLogger(f'{username}_exch_funding')
-        mongo_clt = MongoClient('mongodb://admin:ceff12343@3.114.59.95:27179')
+        mongo_clt = MongoClient(mongodb_uri)
         client = username.split('_')[0]
         name = username.split('_')[1]
         secrets_db = mongo_clt["Secrets_exch"][client]
