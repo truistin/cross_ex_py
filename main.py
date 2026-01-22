@@ -61,82 +61,85 @@ class Strategy:
 
 
     def __init__(self, username, mongodb_uri):
-        self.username = username
-        self.logger = logging.getLogger(f'{username}_exch_funding')
-        mongo_clt = MongoClient(mongodb_uri)
-        client = username.split('_')[0]
-        name = username.split('_')[1]
-        secrets_db = mongo_clt["Secrets_exch"][client]
-        deploy_db = mongo_clt["Strategy_deploy_exch"][client]
-        orch_db = mongo_clt["Strategy_orch_exch"][client]
-        orch_doc = orch_db.find_one({"$and":[{"orch": True}, {"_id":{"$regex":f'{username}@exch_funding'}}]})
-        if orch_doc != None:
-            deploy_doc = deploy_db.find_one({"_id":{"$regex":f'{username}@exch_funding'}})
-            self.available_factor = deploy_doc['transfer_config']['available_factor']
-            self.transfer_factor = deploy_doc['transfer_config']['transfer_factor']
-            self.adl_factor = deploy_doc['transfer_config']['adl_factor']
-            self.min_transfer_amt = deploy_doc['transfer_config']['min_transfer_amt']
-            for item in deploy_doc['secrets']:
-                secret_doc = secrets_db.find_one({"_id":{"$regex":f'{item}'}})
-                if secret_doc['exchange'] == 'kraken':
-                    spot_secret_doc = secrets_db.find_one({"_id":{"$regex":f'{secret_doc["_id"].split(":")[0] + ":spot"}'}})
-                    self.exch_mgr[Exchange(secret_doc['exchange'])] = EXCHANGE_MGR[Exchange(secret_doc['exchange'])](
-                            future_api_key = secret_doc['api_key'], 
-                            future_secrect_key = secret_doc['secret_key'], 
-                            future_passphrase = secret_doc['passphrase'],
-                            spot_api_key = spot_secret_doc['api_key'],
-                            spot_secrect_key = spot_secret_doc['secret_key'],
-                            spot_passphrase = spot_secret_doc['passphrase'])
-                else:
-                    self.exch_mgr[Exchange(secret_doc['exchange'])] = EXCHANGE_MGR[Exchange(secret_doc['exchange'])](api_key=secret_doc['api_key'], secrect_key=secret_doc['secret_key'], passphrase=secret_doc['passphrase'])
+        try:
+            self.username = username
+            self.logger = logging.getLogger(f'{username}_exch_funding')
+            self.logger.info(f"username:{username}, mongodb_uri:{mongodb_uri}")
+            mongo_clt = MongoClient(mongodb_uri)
+            client = username.split('_')[0]
+            name = username.split('_')[1]
+            secrets_db = mongo_clt["Secrets_exch"][client]
+            deploy_db = mongo_clt["Strategy_deploy_exch"][client]
+            orch_db = mongo_clt["Strategy_orch_exch"][client]
+            orch_doc = orch_db.find_one({"$and":[{"orch": True}, {"_id":{"$regex":f'{username}@exch_funding'}}]})
+            if orch_doc != None:
+                deploy_doc = deploy_db.find_one({"_id":{"$regex":f'{username}@exch_funding'}})
+                self.available_factor = deploy_doc['transfer_config']['available_factor']
+                self.transfer_factor = deploy_doc['transfer_config']['transfer_factor']
+                self.adl_factor = deploy_doc['transfer_config']['adl_factor']
+                self.min_transfer_amt = deploy_doc['transfer_config']['min_transfer_amt']
+                for item in deploy_doc['secrets']:
+                    secret_doc = secrets_db.find_one({"_id":{"$regex":f'{item}'}})
+                    if secret_doc['exchange'] == 'kraken':
+                        spot_secret_doc = secrets_db.find_one({"_id":{"$regex":f'{secret_doc["_id"].split(":")[0] + ":spot"}'}})
+                        self.exch_mgr[Exchange(secret_doc['exchange'])] = EXCHANGE_MGR[Exchange(secret_doc['exchange'])](
+                                future_api_key = secret_doc['api_key'], 
+                                future_secrect_key = secret_doc['secret_key'], 
+                                future_passphrase = secret_doc['passphrase'],
+                                spot_api_key = spot_secret_doc['api_key'],
+                                spot_secrect_key = spot_secret_doc['secret_key'],
+                                spot_passphrase = spot_secret_doc['passphrase'])
+                    else:
+                        self.exch_mgr[Exchange(secret_doc['exchange'])] = EXCHANGE_MGR[Exchange(secret_doc['exchange'])](api_key=secret_doc['api_key'], secrect_key=secret_doc['secret_key'], passphrase=secret_doc['passphrase'])
 
-                self.exch_addr[Exchange(secret_doc['exchange'])] = {}
-                #ERC20暂时先不弄
-                #self.exch_addr[Exchange(secret_doc['exchange'])][Chain.ERC20] = (secret_doc['address']['erc20']['addr_name'], secret_doc['address']['erc20']['addr'])
-                self.exch_addr[Exchange(secret_doc['exchange'])][Chain.TRC20] = (secret_doc['address']['trc20']['addr_name'], secret_doc['address']['trc20']['addr'])
-        else:
-            self.logger.error("orch_doc is None")
-            raise ValueError("orch_doc is None")
+                    self.exch_addr[Exchange(secret_doc['exchange'])] = {}
+                    #ERC20暂时先不弄
+                    #self.exch_addr[Exchange(secret_doc['exchange'])][Chain.ERC20] = (secret_doc['address']['erc20']['addr_name'], secret_doc['address']['erc20']['addr'])
+                    self.exch_addr[Exchange(secret_doc['exchange'])][Chain.TRC20] = (secret_doc['address']['trc20']['addr_name'], secret_doc['address']['trc20']['addr'])
+            else:
+                self.logger.error("orch_doc is None")
+                raise ValueError("orch_doc is None")
+            influx_json = mongo_clt["DataSource"]["influx"].find_one({"_id":{"$regex": f".*account_data$"}})
+            self.influx_clt = InfluxDBClient(host = influx_json["host"], port = influx_json["port"], username = influx_json["username"], password = influx_json["password"], database = influx_json["database"], ssl = influx_json["ssl"])
+            
+            for item in deploy_doc['pair_configs']:
+                symbol = format_symbol(Exchange(item['master_pair'].split(':')[0]), item['master_pair'].split(':')[2])
+                self.cfg_symbols.append((symbol, Exchange(item['master_pair'].split(':')[0])))
+                resp = self.exch_mgr[Exchange(item['master_pair'].split(':')[0])].set_leverage(symbol, item['master_leverage'])
+                self.logger.info(f"{Exchange(item['master_pair'].split(':')[0])} set leverage resp: {resp}")
+                symbol = format_symbol(Exchange(item['slave_pair'].split(':')[0]), item['slave_pair'].split(':')[2])
+                self.cfg_symbols.append((symbol, Exchange(item['slave_pair'].split(':')[0])))
+                resp = self.exch_mgr[Exchange(item['slave_pair'].split(':')[0])].set_leverage(symbol, item['slave_leverage'])
+                self.logger.info(f"{Exchange(item['slave_pair'].split(':')[0])} set leverage resp: {resp}")
 
-        influx_json = mongo_clt["DataSource"]["influx"].find_one({"_id":{"$regex": f".*account_data$"}})
-        self.influx_clt = InfluxDBClient(host = influx_json["host"], port = influx_json["port"], username = influx_json["username"], password = influx_json["password"], database = influx_json["database"], ssl = influx_json["ssl"])
-        
-        for item in deploy_doc['pair_configs']:
-            symbol = format_symbol(Exchange(item['master_pair'].split(':')[0]), item['master_pair'].split(':')[2])
-            self.cfg_symbols.append((symbol, Exchange(item['master_pair'].split(':')[0])))
-            resp = self.exch_mgr[Exchange(item['master_pair'].split(':')[0])].set_leverage(symbol, item['master_leverage'])
-            self.logger.info(f"{Exchange(item['master_pair'].split(':')[0])} set leverage resp: {resp}")
-            symbol = format_symbol(Exchange(item['slave_pair'].split(':')[0]), item['slave_pair'].split(':')[2])
-            self.cfg_symbols.append((symbol, Exchange(item['slave_pair'].split(':')[0])))
-            resp = self.exch_mgr[Exchange(item['slave_pair'].split(':')[0])].set_leverage(symbol, item['slave_leverage'])
-            self.logger.info(f"{Exchange(item['slave_pair'].split(':')[0])} set leverage resp: {resp}")
+            for exch, mgr in self.exch_mgr.items():
+                mgr.fetch_pairs_info()
+                resp = mgr.set_pos_mode()
+                self.logger.info(f'{exch} set_pos_mode: {resp}')
+                self.exch_spot_bal[exch] = mgr.fetch_spot_balance()
+                self.logger.info(f'{exch} spot_usdt_bal: {self.exch_spot_bal[exch]}')
+                if self.exch_spot_bal[exch].available > 1.0 :
+                    code, msg = mgr.asset_transfer_inner('USDT', 'spot', 'futures', self.exch_spot_bal[exch].available)
+                    if code != 0:
+                        self.logger.warning(f'{exch} transfer from spot to future fail, msg: {msg}')
+                    else:
+                        self.logger.info(f'{exch} transfer from spot to future succ, msg: {msg}')
 
-        for exch, mgr in self.exch_mgr.items():
-            mgr.fetch_pairs_info()
-            resp = mgr.set_pos_mode()
-            self.logger.info(f'{exch} set_pos_mode: {resp}')
-            self.exch_spot_bal[exch] = mgr.fetch_spot_balance()
-            self.logger.info(f'{exch} spot_usdt_bal: {self.exch_spot_bal[exch]}')
-            if self.exch_spot_bal[exch].available > 1.0 :
-                code, msg = mgr.asset_transfer_inner('USDT', 'spot', 'futures', self.exch_spot_bal[exch].available)
-                if code != 0:
-                    self.logger.warning(f'{exch} transfer from spot to future fail, msg: {msg}')
-                else:
-                    self.logger.info(f'{exch} transfer from spot to future succ, msg: {msg}')
-
-        px_map = {}
-        for exch, mgr in self.exch_mgr.items():
-            px_map[exch] = mgr.fetch_now_px()
-            self.exch_im[exch] = 0.0
-        for item in deploy_doc['pair_configs']:
-            exch = Exchange(item['master_pair'].split(':')[0])
-            symbol = item['master_pair'].split(':')[2]
-            px = px_map[exch][format_symbol(exch, symbol)]
-            self.exch_im[exch] += float(item['max_pos_notional']) / float(item['master_leverage'])
-            exch = Exchange(item['slave_pair'].split(':')[0])
-            symbol = item['slave_pair'].split(':')[2]
-            px = px_map[exch][format_symbol(exch, symbol)]
-            self.exch_im[exch] += float(item['max_pos_notional']) / float(item['slave_leverage'])
+            px_map = {}
+            for exch, mgr in self.exch_mgr.items():
+                px_map[exch] = mgr.fetch_now_px()
+                self.exch_im[exch] = 0.0
+            for item in deploy_doc['pair_configs']:
+                exch = Exchange(item['master_pair'].split(':')[0])
+                symbol = item['master_pair'].split(':')[2]
+                px = px_map[exch][format_symbol(exch, symbol)]
+                self.exch_im[exch] += float(item['max_pos_notional']) / float(item['master_leverage'])
+                exch = Exchange(item['slave_pair'].split(':')[0])
+                symbol = item['slave_pair'].split(':')[2]
+                px = px_map[exch][format_symbol(exch, symbol)]
+                self.exch_im[exch] += float(item['max_pos_notional']) / float(item['slave_leverage'])
+        except Exception as e:
+            self.logger.exception(f"error: {e}")
 
     def record_influxdb(self):
         if len(self.exch_withdraw_record) == 0:
@@ -155,6 +158,7 @@ class Strategy:
                 point = {"measurement": "balance_exch", "tags":tags, "fields":principals_amounts}
                 points.append(point)
 
+            principals_amounts = {}
             tags = {
                 "client": self.username.split('_')[0],
                 "username": self.username.split('_')[1],
@@ -196,8 +200,7 @@ class Strategy:
             fields['size'] = 0.0
             point = {"measurement": "position_exch", "tags":tags, "fields":fields}
             points.append(point)
-        self.influx_clt.write_points(points, time_precision="ms")
-
+        resp = self.influx_clt.write_points(points, time_precision="ms")
 
     def verify_transfer(self, exchange):
         if self.exch_future_bal[exchange].equity < self.transfer_factor * self.exch_im[exchange]:  ##需要转账金额
