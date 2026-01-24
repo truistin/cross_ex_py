@@ -58,6 +58,7 @@ class Strategy:
     influx_clt = None
     username = ""
     cfg_symbols = []
+    transfer_fee = 5
 
 
     def __init__(self, username, mongodb_uri):
@@ -125,18 +126,14 @@ class Strategy:
                     else:
                         self.logger.info(f'{exch} transfer from spot to future succ, msg: {msg}')
 
-            px_map = {}
             for exch, mgr in self.exch_mgr.items():
-                px_map[exch] = mgr.fetch_now_px()
                 self.exch_im[exch] = 0.0
             for item in deploy_doc['pair_configs']:
                 exch = Exchange(item['master_pair'].split(':')[0])
                 symbol = item['master_pair'].split(':')[2]
-                px = px_map[exch][format_symbol(exch, symbol)]
                 self.exch_im[exch] += abs(float(item['max_pos_notional'])) / float(item['master_leverage'])
                 exch = Exchange(item['slave_pair'].split(':')[0])
                 symbol = item['slave_pair'].split(':')[2]
-                px = px_map[exch][format_symbol(exch, symbol)]
                 self.exch_im[exch] += abs(float(item['max_pos_notional'])) / float(item['slave_leverage'])
         except Exception as e:
             self.logger.exception(f"error: {e}")
@@ -264,12 +261,18 @@ class Strategy:
                             self.logger.warning("can_transfer is Null")
                             break
                         can_exch, can_val = next(iter(sorted_can.items()))
-                        transfer_amt = min(can_val, need_val['amt'])
+                
+                        if can_val - self.transfer_fee < need_val['amt'] :
+                            transfer_amt = can_val - self.transfer_fee ##跨所转账数量
+                            inner_transfer_amt = can_val  ##内部转账数量
+                        else:
+                            transfer_amt = need_val['amt']
+                            inner_transfer_amt = need_val['amt'] + self.transfer_fee
                         if transfer_amt < self.min_transfer_amt:
                             continue
                         self.need_transfer[need_exch]["amt"] -= transfer_amt
-                        self.can_transfer[can_exch] -= transfer_amt
-                        code, msg = self.exch_mgr[can_exch].asset_transfer_inner('USDT', 'futures', 'spot', transfer_amt)
+                        self.can_transfer[can_exch] -= transfer_amt.max(inner_transfer_amt)
+                        code, msg = self.exch_mgr[can_exch].asset_transfer_inner('USDT', 'futures', 'spot', inner_transfer_amt)
                         if code != 0:
                             self.logger.error(f'{can_exch} transfer from future to spot fail, msg: {msg}')
                         else:  ##合约转账现货成功
@@ -277,12 +280,12 @@ class Strategy:
                             for i in range(5):
                                 time.sleep(1)
                                 self.exch_spot_bal[can_exch] = self.exch_mgr[can_exch].fetch_spot_balance()
-                                if self.exch_spot_bal[can_exch].available >= transfer_amt * 0.99:
+                                if self.exch_spot_bal[can_exch].available >= inner_transfer_amt * 0.99:
                                     break
-                            if self.exch_spot_bal[can_exch].available < transfer_amt * 0.99:
-                                self.logger.warning(f'{can_exch} transfer from future to spot error, need {transfer_amt} but {self.exch_spot_bal[can_exch].available}')
+                            if self.exch_spot_bal[can_exch].available < inner_transfer_amt * 0.99:
+                                self.logger.warning(f'{can_exch} transfer from future to spot error, need {inner_transfer_amt} but {self.exch_spot_bal[can_exch].available}')
                                 continue
-                            self.transfer_chain(coin='USDT', from_exch=can_exch, to_exch=need_exch, amount=self.exch_spot_bal[can_exch].available, withdraw_clt_id = None)
+                            self.transfer_chain(coin='USDT', from_exch=can_exch, to_exch=need_exch, amount=self.exch_spot_bal[can_exch].available - self.transfer_fee, withdraw_clt_id = None)
                 for exch, mgr in self.exch_mgr.items():
                     if  exch in self.need_transfer.keys() and exch not in {record.to_exch for records_map in self.exch_withdraw_record.values() for record in records_map.values()} :
                         del self.need_transfer[exch]

@@ -27,13 +27,15 @@ class KrakenMgr():
         self.spot_secrect_key = spot_secrect_key
         self.spot_passphrase = spot_passphrase
         self.pairs_info = {}
+        self.px_map = {}
+        self.cnt = 0
 
     def fetch_now_px(self):
         resp = requests.get("https://futures.kraken.com/derivatives/api/v3/tickers").json()
-        px_map = {}
+        self.px_map = {}
         for item in resp['tickers']:
-            px_map[item['symbol']] = float(item['markPrice'])
-        return px_map
+            self.px_map[item['symbol']] = float(item['markPrice'])
+        return self.px_map
 
     def fetch_pairs_info(self):
         pass  ##kraken不需要contractsize
@@ -277,10 +279,9 @@ class KrakenMgr():
      ##获取合约持仓
     def get_future_pos(self):
         positions = {}
-        tickers = {}
-        resp = requests.get('https://futures.kraken.com/derivatives/api/v3/tickers').json()
-        for item in resp['tickers']:
-            tickers[item['symbol']] = float(item['last']) if 'last' in item.keys() else 0.0
+        self.cnt += 1
+        if self.cnt % 3 == 0:
+            self.fetch_now_px()
         response = self.future_request(
             method = "GET",
             path = "/derivatives/api/v3/openpositions",
@@ -295,7 +296,7 @@ class KrakenMgr():
                 if item['side'] == 'short':
                     size = -float(item['size'])
                 leverage = 10
-                pos = Position(symbol = item['symbol'], size = size, entry_price = float(item['price']), liq_price = 0, leverage = leverage, now_price = tickers[item['symbol']])
+                pos = Position(symbol = item['symbol'], size = size, entry_price = float(item['price']), liq_price = 0, leverage = leverage, now_price = self.px_map[item['symbol']])
                 positions[item['symbol']] = pos
         return positions
 
