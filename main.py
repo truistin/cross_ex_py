@@ -133,11 +133,11 @@ class Strategy:
                 exch = Exchange(item['master_pair'].split(':')[0])
                 symbol = item['master_pair'].split(':')[2]
                 px = px_map[exch][format_symbol(exch, symbol)]
-                self.exch_im[exch] += float(item['max_pos_notional']) / float(item['master_leverage'])
+                self.exch_im[exch] += abs(float(item['max_pos_notional'])) / float(item['master_leverage'])
                 exch = Exchange(item['slave_pair'].split(':')[0])
                 symbol = item['slave_pair'].split(':')[2]
                 px = px_map[exch][format_symbol(exch, symbol)]
-                self.exch_im[exch] += float(item['max_pos_notional']) / float(item['slave_leverage'])
+                self.exch_im[exch] += abs(float(item['max_pos_notional'])) / float(item['slave_leverage'])
         except Exception as e:
             self.logger.exception(f"error: {e}")
 
